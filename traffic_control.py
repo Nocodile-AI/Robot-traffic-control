@@ -42,8 +42,9 @@ CLASS_NOCODILE     = "nocodile"
 NORMAL_SPEED = 0.15
 STOP_SPEED   = 0.00
 
-# Minimum bounding box area (pixels) to trust a detection
-MIN_BBOX_AREA = 10000
+# Bounding box area determines distance estimation (ignore when too far away)
+TRAFFIC_LIGHT_MIN = 13000
+NOCODILE_MIN = 13000
 
 # ────────────────────────────────────────────────
 #  MAIN CONTROLLER
@@ -129,18 +130,15 @@ class MemoryTrafficController:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             area = (x2 - x1) * (y2 - y1)
 
-            if area < MIN_BBOX_AREA:
-                continue
-
-            if class_name == CLASS_RED_LIGHT.lower():
+            if class_name == CLASS_RED_LIGHT.lower() and area >= TRAFFIC_LIGHT_MIN:
                 self.red_detected = True
                 self._draw_box(image, x1, y1, x2, y2, "RED LIGHT", conf, (0, 0, 255))
 
-            elif class_name == CLASS_GREEN_LIGHT.lower():
+            elif class_name == CLASS_GREEN_LIGHT.lower() and area >= TRAFFIC_LIGHT_MIN:
                 self.green_detected = True
                 self._draw_box(image, x1, y1, x2, y2, "GREEN LIGHT", conf, (0, 255, 0))
 
-            elif class_name == CLASS_NOCODILE.lower():
+            elif class_name == CLASS_NOCODILE.lower() and area >= NOCODILE_MIN:
                 self.nocodile_detected = True
                 self._draw_box(image, x1, y1, x2, y2, "NOCODILE", conf, (0, 0, 255))
 
