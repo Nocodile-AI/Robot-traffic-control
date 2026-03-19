@@ -1,86 +1,90 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ROS node: Memory-based traffic controller using Teachable Machine classification
-(Model: TensorFlow Lite .tflite + labels.txt)
+ROS node: Memory-based traffic controller using frozen TensorFlow .pb model
 
 Behaviors (same as before):
 - "red light"  → STOP (remember)
 - "nocodile"   → STOP (remember)
 - "green light"→ MOVE (remember)
-- Nothing (or low confidence / background class) detected:
-   • If last was "nocodile" → now safe → MOVE and set last = "nothing"
-   • If last was "red light" → stay STOPPED until green appears
-   • Otherwise keep previous state
-
-No bounding boxes — the whole image is classified as ONE class.
+- Nothing/low confidence:
+  • If last was "nocodile" → safe → MOVE + last = "nothing"
+  • If last was "red light" → stay STOPPED until green
 """
 
 import os
 import rospy
 import cv2
 import numpy as np
-import tensorflow as tf   # pip install tensorflow  (or tflite-runtime for lighter version)
+import tensorflow as tf
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 
 # ────────────────────────────────────────────────
-#  CONFIGURATION
+#  CONFIGURATION – YOU MUST UPDATE THESE
 # ────────────────────────────────────────────────
 
-TFLITE_MODEL   = "model.tflite"      # your exported Teachable Machine model
-LABELS_FILE    = "labels.txt"        # one label per line (exported together)
+PB_MODEL_FILE = "model.pb"           # your downloaded .pb file
 
-CONFIDENCE_THRESHOLD = 0.60          # minimum confidence to trust a class (else = "nothing")
+# !!! CHANGE THESE to match your model's tensor names !!!
+INPUT_TENSOR_NAME  = "input_1:0"     # e.g. "Placeholder:0", "images:0", "input:0"
+OUTPUT_TENSOR_NAME = "Identity:0"    # e.g. "dense/Softmax:0", "predictions/Softmax:0"
 
-# Expected class names (must appear in labels.txt — case-insensitive)
-CLASS_RED_LIGHT   = "red light"
-CLASS_GREEN_LIGHT = "green light"
-CLASS_NOCODILE    = "nocodile"
+CONFIDENCE_THRESHOLD = 0.60          # min confidence to accept a class (else "nothing")
+
+# Expected class names (must match model's output order / argmax mapping)
+# Adjust index ↔ label mapping below if your model has different order
+CLASS_NAMES = [
+    "nothing",       # index 0 - background / no relevant object
+    "red light",     # index 1
+    "green light",   # index 2
+    "nocodile",      # index 3
+    # add more if your model has more classes
+]
 
 # Control parameters
 NORMAL_SPEED = 0.15
 STOP_SPEED   = 0.00
 
-# Input size expected by most Teachable Machine models
+# Typical Teachable-Machine-like input size
 INPUT_SIZE = (224, 224)
 
 # ────────────────────────────────────────────────
 #  MAIN CONTROLLER
 # ────────────────────────────────────────────────
 
-class ClassificationTrafficController:
+class PbTrafficController:
     def __init__(self):
-        rospy.init_node("classification_traffic_controller", anonymous=False)
+        rospy.init_node("pb_traffic_controller", anonymous=False)
 
-        # ─── Model & Labels loading ───────────────────────────────
-        model_path = os.path.join(os.path.dirname(__file__), TFLITE_MODEL)
-        labels_path = os.path.join(os.path.dirname(__file__), LABELS_FILE)
+        # ─── Load frozen .pb model ───────────────────────────────
+        model_path = os.path.join(os.path.dirname(__file__), PB_MODEL_FILE)
 
         if not os.path.exists(model_path):
             rospy.logerr(f"Model not found: {model_path}")
-            rospy.signal_shutdown("Missing model.tflite")
-            return
-        if not os.path.exists(labels_path):
-            rospy.logerr(f"Labels file not found: {labels_path}")
-            rospy.signal_shutdown("Missing labels.txt")
+            rospy.signal_shutdown("Missing .pb file")
             return
 
         try:
-            self.interpreter = tf.lite.Interpreter(model_path=model_path)
-            self.interpreter.allocate_tensors()
-            self.input_details  = self.interpreter.get_input_details()
-            self.output_details = self.interpreter.get_output_details()
+            self.graph = tf.Graph()
+            self.sess = tf.compat.v1.Session(graph=self.graph)
 
-            with open(labels_path, 'r') as f:
-                self.labels = [line.strip() for line in f.readlines()]
+            with tf.compat.v1.gfile.GFile(model_path, "rb") as f:
+                graph_def = tf.compat.v1.GraphDef()
+                graph_def.ParseFromString(f.read())
+                tf.import_graph_def(graph_def, name="")
 
-            rospy.loginfo(f"Teachable Machine model loaded: {TFLITE_MODEL}")
-            rospy.loginfo(f"Classes: {self.labels}")
+            # Get handles to input/output tensors
+            self.input_tensor  = self.graph.get_tensor_by_name(INPUT_TENSOR_NAME)
+            self.output_tensor = self.graph.get_tensor_by_name(OUTPUT_TENSOR_NAME)
+
+            rospy.loginfo(f"Frozen .pb model loaded: {PB_MODEL_FILE}")
+            rospy.loginfo(f"Input tensor:  {INPUT_TENSOR_NAME}")
+            rospy.loginfo(f"Output tensor: {OUTPUT_TENSOR_NAME}")
         except Exception as e:
-            rospy.logerr(f"Failed to load model: {e}")
+            rospy.logerr(f"Failed to load .pb model: {e}")
             rospy.signal_shutdown("Model loading failed")
             return
 
@@ -99,12 +103,12 @@ class ClassificationTrafficController:
         # ─── State with memory ───────────────────────────
         self.current_speed = NORMAL_SPEED
         self.robot_state   = "MOVING"
-        self.last_detected = "nothing"          # "red light", "green light", "nocodile", "nothing"
+        self.last_detected = "nothing"
 
         self.current_predicted = "nothing"
         self.current_conf      = 0.0
 
-        rospy.loginfo("Classification traffic controller initialized (Teachable Machine + memory)")
+        rospy.loginfo("Frozen .pb traffic controller initialized (with memory)")
 
     def image_callback(self, msg: Image):
         try:
@@ -120,37 +124,40 @@ class ClassificationTrafficController:
         self.publish_visualization(cv_image)
 
     def classify_image(self, cv_image):
-        """Run Teachable Machine classification on the full image"""
-        # Resize to model input size
+        """Run inference with frozen .pb graph"""
+        # Preprocess: resize → RGB → normalize [0,1]
         resized = cv2.resize(cv_image, INPUT_SIZE)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         normalized = rgb.astype(np.float32) / 255.0
         input_data = np.expand_dims(normalized, axis=0)
 
-        # Feed to interpreter
-        self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
-        self.interpreter.invoke()
+        # Run session
+        output = self.sess.run(
+            self.output_tensor,
+            feed_dict={self.input_tensor: input_data}
+        )[0]  # shape (num_classes,)
 
-        # Get output
-        output = self.interpreter.get_tensor(self.output_details[0]['index'])[0]
         max_conf = float(np.max(output))
         class_idx = int(np.argmax(output))
 
         if max_conf < CONFIDENCE_THRESHOLD:
             predicted_label = "nothing"
         else:
-            predicted_label = self.labels[class_idx].strip().lower()
+            try:
+                predicted_label = CLASS_NAMES[class_idx].lower().strip()
+            except IndexError:
+                predicted_label = "unknown"
+                rospy.logwarn(f"Class index {class_idx} out of range")
 
         self.current_predicted = predicted_label
         self.current_conf      = max_conf
 
-        # Set detection flags for decision logic
-        self.red_detected      = (predicted_label == CLASS_RED_LIGHT.lower())
-        self.green_detected    = (predicted_label == CLASS_GREEN_LIGHT.lower())
-        self.nocodile_detected = (predicted_label == CLASS_NOCODILE.lower())
+        # Detection flags for decision
+        self.red_detected      = (predicted_label == "red light")
+        self.green_detected    = (predicted_label == "green light")
+        self.nocodile_detected = (predicted_label == "nocodile")
 
     def make_decision(self):
-        """Decision logic with memory of last confident detection"""
         if self.red_detected:
             self.last_detected = "red light"
             self.robot_state   = "STOPPED"
@@ -167,14 +174,12 @@ class ClassificationTrafficController:
             self.current_speed = NORMAL_SPEED
 
         else:
-            # Nothing (or low-confidence) detected this frame
+            # Nothing / low confidence this frame
             if self.last_detected == "nocodile":
-                # nocodile disappeared → road is now clear
                 self.last_detected = "nothing"
                 self.robot_state   = "MOVING"
                 self.current_speed = NORMAL_SPEED
-            # red light disappearance → stay stopped (safety)
-            # green or nothing → keep previous decision
+            # red disappearance → stay stopped (safety)
 
     def publish_control(self):
         cmd = Twist()
@@ -192,7 +197,6 @@ class ClassificationTrafficController:
         self.pub_status.publish(msg)
 
     def publish_visualization(self, image):
-        # Big prediction text
         color = (0, 0, 255) if self.red_detected else \
                 (0, 255, 0) if self.green_detected else \
                 (0, 0, 255) if self.nocodile_detected else (255, 255, 255)
@@ -201,14 +205,12 @@ class ClassificationTrafficController:
         text = f"PREDICTED: {label} ({self.current_conf:.1%})"
         cv2.putText(image, text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.1, color, 3)
 
-        # Robot state
         cv2.putText(image,
                     f"STATE: {self.robot_state}   SPEED: {self.current_speed:.2f}",
                     (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Memory
         cv2.putText(image,
-                    f"LAST REMEMBERED: {self.last_detected.upper()}",
+                    f"LAST: {self.last_detected.upper()}",
                     (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
 
         try:
@@ -217,16 +219,20 @@ class ClassificationTrafficController:
         except CvBridgeError as e:
             rospy.logerr(f"Visualization publish failed: {e}")
 
-        cv2.imshow("Traffic Controller (Classification)", image)
+        cv2.imshow("Traffic Controller (.pb)", image)
         cv2.waitKey(1)
 
 
 # ────────────────────────────────────────────────
 if __name__ == "__main__":
     try:
-        controller = ClassificationTrafficController()
+        controller = PbTrafficController()
         rospy.spin()
     except rospy.ROSInterruptException:
         rospy.loginfo("Node shutdown")
     except Exception as e:
         rospy.logerr(f"Fatal error: {e}")
+    finally:
+        # Clean up session
+        if hasattr(controller, 'sess'):
+            controller.sess.close()
