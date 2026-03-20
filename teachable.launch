@@ -30,7 +30,7 @@
 
 	<!-- Traffic Management System -->
 	<group if="$(arg enable_traffic)">
-		<node pkg="raicomworkshop" type="traffic_controller.py" name="traffic_controller" output="screen" launch-prefix="xterm -e" />
+		<node pkg="raicomworkshop" type="teachable_machine.py" name="traffic_controller" output="screen" launch-prefix="xterm -e" />
 	</group>
 	
 	<!-- Object Grasping System -->
