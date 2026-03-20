@@ -228,10 +228,13 @@ if __name__ == "__main__":
     try:
         controller = PbTrafficController()
         rospy.spin()
+
     except rospy.ROSInterruptException:
         rospy.loginfo("Node shutdown")
+        while True:pass
     except Exception as e:
         rospy.logerr(f"Fatal error: {e}")
+        while True:pass
     finally:
         # Clean up session
         if hasattr(controller, 'sess'):

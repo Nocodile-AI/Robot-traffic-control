@@ -224,8 +224,11 @@ class MemoryTrafficController:
 if __name__ == "__main__":
     try:
         controller = MemoryTrafficController()
+        rospy.loginfo("Traffic Controller Started")
         rospy.spin()
     except rospy.ROSInterruptException:
         rospy.loginfo("Node shutdown")
+        while True:pass
     except Exception as e:
         rospy.logerr(f"Fatal error: {e}")
+        while True:pass
