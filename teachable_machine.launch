@@ -1,0 +1,29 @@
+<!-- Traffic controller: frozen TensorFlow .pb model (Teachable Machine export) -->
+<!-- Usage: roslaunch semi_auto_match_24 teachable_machine.launch -->
+<!-- WARNING: Do NOT launch alongside traffic.launch or teachable_machine_2.launch.
+     All traffic controllers publish to /cmd_vel - running more than one causes conflicts. -->
+<launch>
+    <arg name="lidar_type_tel"  default="ydlidar_g6" doc="lidar type [3iroboticslidar2, ydlidar_g2]"/>
+    <arg name="camera_type_tel" default="d435"        doc="camera type [astrapro, astra, d435...]"/>
+    <arg name="enable_grasping" default="true"        doc="Enable object grasping"/>
+
+    <include file="$(find spark_bringup)/launch/driver_bringup.launch">
+        <arg name="camera_type_tel" value="$(arg camera_type_tel)"/>
+        <arg name="lidar_type_tel"  value="$(arg lidar_type_tel)"/>
+        <arg name="start_camera"    value="true"/>
+    </include>
+
+    <include file="$(find swiftpro)/launch/pro_control_nomoveit.launch"/>
+
+    <include file="$(find lidar_driver_transfer)/launch/$(arg lidar_type_tel).launch"/>
+
+    <node pkg="semi_auto_match_24" type="teleop.py" name="teleop" launch-prefix="xterm -e"/>
+
+    <!-- model.pb must be in the same directory as teachable_machine.py -->
+    <node pkg="semi_auto_match_24" type="teachable_machine.py" name="pb_traffic_controller" output="screen"/>
+
+    <group if="$(arg enable_grasping)">
+        <node pkg="semi_auto_match_24" type="yolo_detector.py" name="yolo_detector" output="screen"/>
+        <node pkg="semi_auto_match_24" type="grasp_yolo.py"    name="grasp_yolo"    output="screen"/>
+    </group>
+</launch>
