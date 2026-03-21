@@ -4,13 +4,13 @@
 ROS node: Simple traffic-aware robot controller (with memory of last detection)
 
 Behaviors:
-- "red light"  → STOP (and remember)
-- "nocodile"   → STOP (and remember)
-- "green light"→ MOVE (and remember)
+- "red light"  ? STOP (and remember)
+- "nocodile"   ? STOP (and remember)
+- "green light"? MOVE (and remember)
 - Nothing detected:
-   • If last was "nocodile" → now safe → MOVE and set last = "nothing"
-   • If last was "red light" → stay STOPPED (safety)
-   • If last was "green light" or "nothing" → keep previous state
+   ? If last was "nocodile" ? now safe ? MOVE and set last = "nothing"
+   ? If last was "red light" ? stay STOPPED (safety)
+   ? If last was "green light" or "nothing" ? keep previous state
 
 This gives the robot "memory" so it doesn't forget a red light or nocodile until a new clear signal appears.
 """
@@ -25,36 +25,37 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from ultralytics import YOLO
 
-# ────────────────────────────────────────────────
+# ????????????????????????????????????????????????
 #  CONFIGURATION
-# ────────────────────────────────────────────────
+# ????????????????????????????????????????????????
 
 MODEL_FILENAME = "best.pt"
 
 CONFIDENCE_THRESHOLD = 0.50
 
 # Expected class names from your trained model (exact match required)
-CLASS_RED_LIGHT    = "red light"
-CLASS_GREEN_LIGHT  = "green light"
-CLASS_NOCODILE     = "nocodile"
+CLASS_RED_LIGHT    = "green-light"
+CLASS_GREEN_LIGHT  = "nocodile"
+CLASS_NOCODILE     = "red-light"
 
 # Control parameters
-NORMAL_SPEED = 0.15
+NORMAL_SPEED = 0.015
 STOP_SPEED   = 0.00
 
 # Bounding box area determines distance estimation (ignore when too far away)
 TRAFFIC_LIGHT_MIN = 13000
 NOCODILE_MIN = 13000
 
-# ────────────────────────────────────────────────
+# ????????????????????????????????????????????????
 #  MAIN CONTROLLER
-# ────────────────────────────────────────────────
+# ????????????????????????????????????????????????
 
 class MemoryTrafficController:
     def __init__(self):
+        print("ababa")
         rospy.init_node("memory_traffic_controller", anonymous=False)
 
-        # ─── Model loading ───────────────────────────────
+        # ??? Model loading ???????????????????????????????
         model_path = os.path.join(os.path.dirname(__file__), MODEL_FILENAME)
 
         if not os.path.exists(model_path):
@@ -74,7 +75,7 @@ class MemoryTrafficController:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         rospy.loginfo(f"Using device: {self.device}")
 
-        # ─── ROS interfaces ──────────────────────────────
+        # ??? ROS interfaces ??????????????????????????????
         self.bridge = CvBridge()
 
         self.sub_image = rospy.Subscriber(
@@ -86,7 +87,7 @@ class MemoryTrafficController:
         self.pub_status  = rospy.Publisher("/traffic/status", String, queue_size=5)
         self.pub_viz     = rospy.Publisher("/traffic/image_with_detections", Image, queue_size=1)
 
-        # ─── State with memory ───────────────────────────
+        # ??? State with memory ???????????????????????????
         self.current_speed = NORMAL_SPEED
         self.robot_state   = "MOVING"
         self.last_detected = "nothing"          # "red light", "green light", "nocodile", "nothing"
@@ -162,12 +163,12 @@ class MemoryTrafficController:
         else:
             # Nothing detected this frame
             if self.last_detected == "nocodile":
-                # Special rule: nocodile disappeared → road is clear → MOVE
+                # Special rule: nocodile disappeared ? road is clear ? MOVE
                 self.last_detected = "nothing"
                 self.robot_state   = "MOVING"
                 self.current_speed = NORMAL_SPEED
             # Otherwise keep previous decision (especially important for red light)
-            # e.g. red light disappears → stay STOPPED until green appears
+            # e.g. red light disappears ? stay STOPPED until green appears
 
     def publish_control(self):
         cmd = Twist()
@@ -201,7 +202,7 @@ class MemoryTrafficController:
             cv2.putText(image, "STOPPING (red / nocodile)", (10, 105),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         elif self.green_detected:
-            cv2.putText(image, "GREEN LIGHT → GO", (10, 105),
+            cv2.putText(image, "GREEN LIGHT ? GO", (10, 105),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         try:
@@ -220,15 +221,24 @@ class MemoryTrafficController:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
 
-# ────────────────────────────────────────────────
-if __name__ == "__main__" or True:
+# ????????????????????????????????????????????????
+#if __name__ == "__main__":   
+#    try:
+#        controller = MemoryTrafficController()
+#        rospy.spin()
+#    except rospy.ROSInterruptException:
+#        rospy.loginfo("Node shutdown")
+#    except Exception as e:
+#        rospy.logerr(f"Fatal error: {e}")
+
+if __name__ == '__main__' or True:# !-------------
     try:
         controller = MemoryTrafficController()
-        rospy.loginfo("Traffic Controller Started")
+        rospy.loginfo("Traffic Controller started")
         rospy.spin()
     except rospy.ROSInterruptException:
-        rospy.loginfo("Node shutdown")
+        rospy.loginfo("Traffic Controller stopped")
         while True:pass
     except Exception as e:
-        rospy.logerr(f"Fatal error: {e}")
+        rospy.logerr(f"Traffic Controller error: {e}")
         while True:pass

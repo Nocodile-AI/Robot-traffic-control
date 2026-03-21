@@ -1,5 +1,5 @@
 <!--semi_auto with Traffic Management System-->
-<!--SPARK技术讨论与反馈群：8346256-->
+<!--SPARKæ€æ¯è®¨è®ºä¸åé¦ç¾¤ï¼8346256-->
 <launch>
   	<!-- Arguments -->
   	<arg name="slam_methods"           default="gmapping"   doc="slam type [gmapping, cartographer, hector, karto, frontier_exploration]"/>
@@ -11,26 +11,21 @@
   	<arg name="enable_traffic"         default="true"       doc="Enable traffic management system"/>
   	<arg name="enable_grasping"        default="true"       doc="Enable object grasping"/>
   	
-	<!--spark底盘驱动，机器人描述,底盘,相机-->
+	<!--sparkåºçé©±å¨ï¼æºå¨äººæè¿°,åºç,ç¸æº-->
 	<include file="$(find spark_bringup)/launch/driver_bringup.launch">
 		<arg name="camera_type_tel"	value="$(arg camera_type_tel)"/>
 		<arg name="lidar_type_tel"	value="$(arg lidar_type_tel)"/>
 		<arg name="start_camera" value="true"/>	
 	</include>
 
-    <!--UARM机械臂-->
-    <include file="$(find swiftpro)/launch/pro_control_nomoveit.launch"/>
 
- 	<!-- 启动雷达 -->
-	<include file="$(find lidar_driver_transfer)/launch/$(arg lidar_type_tel).launch">
-	</include>
 
 	<!-- Teleop -->
 	<node pkg="raicomworkshop" type="teleop.py" name="teleop" launch-prefix="xterm -e" />
 
 	<!-- Traffic Management System -->
 	<group if="$(arg enable_traffic)">
-		<node pkg="raicomworkshop" type="traffic_controller.py" name="traffic_controller" output="screen" launch-prefix="xterm -e" />
+		<node pkg="raicomworkshop" type="traffic_controller.py" name="traffic_controller" output="screen"/>
 	</group>
 	
 	<!-- Object Grasping System -->
@@ -39,7 +34,7 @@
 		<node pkg="raicomworkshop" type="yolo_detector.py" name="yolo_detector" output="screen"/>
 		
 		<!-- YOLO-based Grasp Controller -->
-		<node pkg="raicomworkshop" type="grasp_yolo.py" name="grasp_yolo" output="screen"/>
+		<node pkg="raicomworkshop" type="grasp.py" name="grasp_yolo" output="screen"/>
 	</group>
 
 </launch>

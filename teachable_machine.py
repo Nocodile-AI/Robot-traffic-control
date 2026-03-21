@@ -88,6 +88,8 @@ class PbTrafficController:
             rospy.signal_shutdown("Model loading failed")
             return
 
+            
+
         # ─── ROS interfaces ──────────────────────────────
         self.bridge = CvBridge()
 
